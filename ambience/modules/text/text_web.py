@@ -111,10 +111,10 @@ def convert_to_words_arr(text_arr):
     words_arr=[]
     for entry in text_arr:
         word=entry[1][0]
-        words_arr.append(word)
-        # word = word.strip()
-        # words_split= word.split()
-        # words_arr.extend(words_split)
+        # words_arr.append(word)
+        word = word.strip()
+        words_split= word.split()
+        words_arr.extend(words_split)
     return words_arr
 # def sync_db():
 #     ids_in_db = set(get_all_ids())
@@ -198,8 +198,8 @@ def text_find_similar(text_arr):
         # print(image)
         for target_word in words_arr:
             target_word_is_cyrillic=has_cyrillic(target_word)
-            for data in value:
-                db_word=data[1][0]
+            db_words=convert_to_words_arr(value)
+            for db_word in db_words:
                 w_ratio_metaphone_en=None
                 w_ratio_metaphone_ru=None
                 w_ratio_orig=None
