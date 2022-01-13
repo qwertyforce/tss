@@ -1,6 +1,6 @@
 import uvicorn
 if __name__ == '__main__':
-    uvicorn.run('rgb_histogram_web:app', host='127.0.0.1', port=33335, log_level="info")
+    uvicorn.run('color_web:app', host='127.0.0.1', port=33335, log_level="info")
 
 from pydantic import BaseModel
 from fastapi import FastAPI, File, Form, HTTPException, Response, status
@@ -136,8 +136,8 @@ async def read_root():
     return {"Hello": "World"}
 
 
-@app.post("/calculate_hist_features")
-async def calculate_hist_features_handler(image: bytes = File(...), image_id: str = Form(...)):
+@app.post("/calculate_color_features")
+async def calculate_color_features_handler(image: bytes = File(...), image_id: str = Form(...)):
     features = get_features(image)
     add_descriptor(int(image_id), adapt_array(features))
     index_id_map.add_with_ids(np.array([features]), np.int64([image_id]))
@@ -147,8 +147,8 @@ async def calculate_hist_features_handler(image: bytes = File(...), image_id: st
 class Item_image_id(BaseModel):
     image_id: int
 
-@app.post("/hist_get_similar_images_by_id")
-async def get_similar_images_by_id_handler(item: Item_image_id):
+@app.post("/color_get_similar_images_by_id")
+async def color_get_similar_images_by_id_handler(item: Item_image_id):
     try:
         target_features = index_id_map.reconstruct(item.image_id)
         similar = hist_similarity_search(target_features, 20)
@@ -158,22 +158,22 @@ async def get_similar_images_by_id_handler(item: Item_image_id):
             status_code=500, detail="Image with this id is not found")
 
 
-@app.post("/hist_get_similar_images_by_image_buffer")
-async def hist_get_similar_images_by_image_buffer_handler(image: bytes = File(...)):
+@app.post("/color_get_similar_images_by_image_buffer")
+async def color_get_similar_images_by_image_buffer_handler(image: bytes = File(...)):
     target_features = get_features(image)
     similar = hist_similarity_search(target_features, 20)
     return similar
 
 
-@app.post("/delete_hist_features")
-async def delete_hist_features_handler(item: Item_image_id):
+@app.post("/delete_color_features")
+async def delete_color_features_handler(item: Item_image_id):
     delete_descriptor_by_id(item.image_id)
     index_id_map.remove_ids(np.int64([item.image_id]))
     return Response(status_code=status.HTTP_200_OK)
 
 print(__name__)
 
-if __name__ == 'rgb_histogram_web':
+if __name__ == 'color_web':
     create_table()
     # sync_db()
     init_index()
