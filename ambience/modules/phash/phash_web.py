@@ -176,9 +176,9 @@ def sync_db():
     print("db synced")
 
 
-def phash_reverse_search(image_buffer):
+def phash_reverse_search(image_buffer,k):
     target_features = get_phash_and_mirrored_phash(image_buffer)
-    D, I = index.search(target_features, 10)
+    D, I = index.search(target_features, k)
     # print(index.search(target_features, 5))
     print(D, I)
     res=[]
@@ -195,8 +195,9 @@ async def read_root():
 
 
 @app.post("/phash_get_similar_images_by_image_buffer")
-async def phash_reverse_search_handler(image: bytes = File(...)):
-    found_images = phash_reverse_search(image)
+async def phash_reverse_search_handler(image: bytes = File(...), k: str = Form(...)):
+    k=int(k)
+    found_images = phash_reverse_search(image,k)
     print(found_images)
     return found_images
 
