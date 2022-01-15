@@ -3,8 +3,9 @@ if __name__ == '__main__':
     uvicorn.run('phash_web:app', host='127.0.0.1', port=33336, log_level="info")
 
 import faiss
+from typing import Optional
 from pydantic import BaseModel
-from fastapi import FastAPI, File, Form, Response, status
+from fastapi import FastAPI, File, Form, Response, status, HTTPException
 from os import listdir
 import numpy as np
 from scipy.fft import dct
@@ -176,15 +177,18 @@ def sync_db():
     print("db synced")
 
 
-def phash_reverse_search(image_buffer,k):
-    target_features = get_phash_and_mirrored_phash(image_buffer)
-    D, I = index.search(target_features, k)
-    # print(index.search(target_features, 5))
-    print(D, I)
-    res=[]
-    for i in range(len(D)):
-        if D[i][0] <= 64:
-            res.append({"image_id": int(I[i][0]), "distance": int(D[i][0])})
+def phash_reverse_search(image_buffer,k,distance_threshold):
+    target_features = get_phash_and_mirrored_phash(image_buffer) #TTA
+    if k is not None:
+        D, I = index.search(target_features, k)
+        D = D.flatten()
+        I = I.flatten()
+    elif distance_threshold is not None:
+        _, D, I = index.range_search(target_features, distance_threshold)
+    
+    _, indexes = np.unique(I, return_index=True)
+    res=[{"image_id":int(I[idx]), "distance":int(D[idx])} for idx in indexes]
+
     return res
 
 
@@ -193,11 +197,15 @@ app = FastAPI()
 async def read_root():
     return {"Hello": "World"}
 
-
 @app.post("/phash_get_similar_images_by_image_buffer")
-async def phash_reverse_search_handler(image: bytes = File(...), k: str = Form(...)):
-    k=int(k)
-    found_images = phash_reverse_search(image,k)
+async def phash_reverse_search_handler(image: bytes = File(...), k: Optional[str] = Form(None), distance_threshold: Optional[str] = Form(None)):
+    if k:
+        k=int(k)
+    if distance_threshold:
+       distance_threshold=int(distance_threshold)
+    if (k is None) == (distance_threshold is None): 
+        raise HTTPException(status_code=500, detail="both k and distance_threshold present")
+    found_images = phash_reverse_search(image,k,distance_threshold)
     print(found_images)
     return found_images
 
@@ -206,7 +214,7 @@ async def phash_reverse_search_handler(image: bytes = File(...), k: str = Form(.
 async def calculate_phash_features_handler(image: bytes = File(...), image_id: str = Form(...)):
     features = get_phash(image)
     add_descriptor(int(image_id), adapt_array(features))
-    index.add_with_ids(np.array([features]), np.int64([image_id]))
+    index.add_with_ids(features.reshape(1,-1), np.int64([image_id]))
     return Response(status_code=status.HTTP_200_OK)
 
 
