@@ -3,6 +3,7 @@ if __name__ == '__main__':
     uvicorn.run('color_web:app', host='127.0.0.1', port=33335, log_level="info")
 
 from pydantic import BaseModel
+from typing import Optional
 from fastapi import FastAPI, File, Form, HTTPException, Response, status
 import faiss
 from os import listdir
@@ -18,11 +19,21 @@ index_id_map = faiss.IndexIDMap2(sub_index)
 
 
 def init_index():
-    global index_flat
-    all_ids = get_all_ids()
-    for image_id in tqdm(all_ids):
-        features = convert_array(get_rgb_histogram_by_id(image_id))
-        index_id_map.add_with_ids(np.array([features]), np.int64([image_id]))
+    # all_ids = get_all_ids()
+    # for image_id in tqdm(all_ids):
+    #     features = convert_array(get_rgb_histogram_by_id(image_id))
+    #     index_id_map.add_with_ids(features.reshape(1,-1), np.int64([image_id]))
+    image_data=get_all_data()
+    features=[]
+    ids=[]
+    for image in image_data:
+        features.append(image['features'])
+        ids.append(image['image_id'])
+
+    ids=np.int64(ids)
+    features=np.array(features,dtype=np.float32)
+    if(len(features)!=0):
+        index_id_map.add_with_ids(features,ids)
     print("Index is ready")
 
 
@@ -85,6 +96,16 @@ def get_all_ids():
     all_rows = cursor.fetchall()
     return list(map(lambda el: el[0], all_rows))
 
+def get_all_data():
+    cursor = conn.cursor()
+    query = '''
+    SELECT id, rgb_histogram
+    FROM rgb_hists
+    '''
+    cursor.execute(query)
+    all_rows = cursor.fetchall()
+    return list(map(lambda el:{"image_id":el[0],"features":convert_array(el[1])},all_rows))
+
 
 def convert_array(text):
     out = io.BytesIO(text)
@@ -119,13 +140,33 @@ def sync_db():
     print("db synced")
 
 
-def hist_similarity_search(target_features, n):
-    D, I = index_id_map.search(np.array([target_features]), n)
-    print(D, I)
-    similar = []
-    for img_id in I[0]:
-        similar.append(int(img_id))
-    return similar
+def hist_similarity_search(target_features, k, distance_threshold):
+    if k is not None:
+        D, I = index_id_map.search(target_features, k)
+        D = D.flatten()
+        I = I.flatten()
+    elif distance_threshold is not None:
+        start_k=min(index_id_map.ntotal, 100)
+        while True:
+            D, I = index_id_map.search(target_features,start_k)
+            D = D.flatten()
+            I = I.flatten()
+            if max(D) < distance_threshold:
+                if(start_k == index_id_map.ntotal):
+                    break
+                start_k*=2
+            else:
+                indexes=np.where(D < distance_threshold)[0]
+                D=D[indexes]
+                I=I[indexes]
+                break
+            if(start_k > index_id_map.ntotal):
+                    break
+            print(start_k)
+
+    res=[{"image_id":int(I[i]),"distance":float(D[i])} for i in range(len(D))]
+
+    return res
 
 
 app = FastAPI()
@@ -140,18 +181,29 @@ async def read_root():
 async def calculate_color_features_handler(image: bytes = File(...), image_id: str = Form(...)):
     features = get_features(image)
     add_descriptor(int(image_id), adapt_array(features))
-    index_id_map.add_with_ids(np.array([features]), np.int64([image_id]))
+    index_id_map.add_with_ids(features.reshape(1,-1), np.int64([image_id]))
     return Response(status_code=status.HTTP_200_OK)
 
 
 class Item_image_id(BaseModel):
     image_id: int
+    k: Optional[str] = None
+    distance_threshold: Optional[str] = None
 
 @app.post("/color_get_similar_images_by_id")
 async def color_get_similar_images_by_id_handler(item: Item_image_id):
     try:
-        target_features = index_id_map.reconstruct(item.image_id)
-        similar = hist_similarity_search(target_features, 20)
+        k=item.k
+        distance_threshold=item.distance_threshold
+        if item.k:
+            k = int(k)
+        if item.distance_threshold:
+            distance_threshold = float(distance_threshold)
+        if (k is None) == (distance_threshold is None):
+            raise HTTPException(status_code=500, detail="both k and distance_threshold present")
+
+        target_features = index_id_map.reconstruct(item.image_id).reshape(1,-1)
+        similar = hist_similarity_search(target_features, k, distance_threshold)
         return similar
     except:
         raise HTTPException(
@@ -159,10 +211,20 @@ async def color_get_similar_images_by_id_handler(item: Item_image_id):
 
 
 @app.post("/color_get_similar_images_by_image_buffer")
-async def color_get_similar_images_by_image_buffer_handler(image: bytes = File(...)):
-    target_features = get_features(image)
-    similar = hist_similarity_search(target_features, 20)
-    return similar
+async def color_get_similar_images_by_image_buffer_handler(image: bytes = File(...), k: Optional[str] = Form(None), distance_threshold: Optional[str] = Form(None)):
+    try:
+        if k:
+            k = int(k)
+        if distance_threshold:
+            distance_threshold = float(distance_threshold)
+        if (k is None) == (distance_threshold is None):
+            raise HTTPException(status_code=500, detail="both k and distance_threshold present")
+
+        target_features=get_features(image).reshape(1,-1)
+        results = hist_similarity_search(target_features, k, distance_threshold)
+        return results
+    except RuntimeError:
+        raise HTTPException(status_code=500, detail="Can't get color_get_similar_images_by_image_buffer")
 
 
 @app.post("/delete_color_features")
