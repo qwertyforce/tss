@@ -89,8 +89,9 @@ def transform(im):
 def get_features(image):
     image = transform(image).unsqueeze(0).to(device)
     with torch.no_grad():
-        image_features = model(image)
-    return image_features.cpu().numpy()[0]
+        feature_vector = model(image).cpu().numpy()[0]
+    feature_vector/=np.linalg.norm(feature_vector)
+    return feature_vector
 
 file_names=listdir(IMAGE_PATH)
 create_table(conn)
@@ -130,19 +131,17 @@ for batch in new_images:
         batch_features.append(calc_nn_features(file_name))
     batch_features= [i for i in batch_features if i] #remove None's
     print("pushing data to db")
-    if pca is None:
-        batch_features= [( x[0],adapt_array(x[1]) ) for x in batch_features]
-        conn_orig_db.executemany('''INSERT INTO nn_table(id, nn_features) VALUES (?,?)''', batch_features)
-    else:
-        before_pca_batch_features=[( x[0],adapt_array(x[1]) ) for x in batch_features]
-        conn_orig_db.executemany('''INSERT INTO nn_table(id, nn_features) VALUES (?,?)''', before_pca_batch_features)
+    
+    batch_features_orig=[( x[0], adapt_array(x[1].astype(np.float32)) ) for x in batch_features]
+    conn_orig_db.executemany('''INSERT INTO nn_table(id, nn_features) VALUES (?,?)''', batch_features_orig) 
 
+    if pca is not None:
         image_features=[x[1] for x in batch_features]
-        image_features=pca.transform(image_features)
-
+        image_features=pca.transform(image_features) #pca whitening
+        image_features/=np.linalg.norm(image_features) # l2 norm
         pca_whitened_batch_features=[]
         for i in range(len(batch_features)):
-            pca_whitened_batch_features.append( (batch_features[i][0],adapt_array(image_features[i]) ) )
+            pca_whitened_batch_features.append( (batch_features[i][0],adapt_array(image_features[i].astype(np.float32)) ) )
         conn.executemany('''INSERT INTO nn_table(id, nn_features) VALUES (?,?)''', pca_whitened_batch_features)
     conn_orig_db.commit()
     conn.commit()
@@ -154,7 +153,7 @@ def convert_array(text):
     return np.load(out)
 
 def get_all_data():
-    cursor = conn.cursor()
+    cursor = conn_orig_db.cursor()
     query = '''
     SELECT id, nn_features
     FROM nn_table
@@ -165,16 +164,19 @@ def get_all_data():
     return ( list(map(lambda el:el[0],all_rows)),list(map(lambda el:convert_array(el[1]),all_rows)) )
 
 
-print("looks like initial calc, running pca_w")
+
 if pca is None:
+    print("looks like initial calc, running pca_w")
     subprocess.call(['python', 'calc_pca_w.py'])
     with open(pca_w_file, 'rb') as pickle_file:
         pca = pickle.load(pickle_file)
     image_ids,image_features=get_all_data()
-    image_features=pca.transform(image_features)
+    image_features=pca.transform(image_features) #pca whitening
+    image_features/=np.linalg.norm(image_features) # l2 norm
+
     pca_whitened_batch_features=[]
     for i in range(len(image_ids)):
-         pca_whitened_batch_features.append((image_ids[i],adapt_array(image_features[i])))
+         pca_whitened_batch_features.append((image_ids[i],adapt_array(image_features[i].astype(np.float32))))
     conn.executemany('''INSERT INTO nn_table(id, nn_features) VALUES (?,?)''', pca_whitened_batch_features)  
     conn.commit()  
     
