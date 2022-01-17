@@ -187,7 +187,7 @@ def phash_reverse_search(target_features,k,distance_threshold):
     
     _, indexes = np.unique(I, return_index=True)
     res=[{"image_id":int(I[idx]), "distance":int(D[idx])} for idx in indexes]
-
+    res = sorted(res, key=lambda x: x["distance"])    
     return res
 
 
