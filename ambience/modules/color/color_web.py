@@ -207,7 +207,7 @@ async def color_get_similar_images_by_id_handler(item: Item_image_id):
         return similar
     except:
         raise HTTPException(
-            status_code=500, detail="Image with this id is not found")
+            status_code=500, detail="Can't get color_get_similar_images_by_id")
 
 
 @app.post("/color_get_similar_images_by_image_buffer")
