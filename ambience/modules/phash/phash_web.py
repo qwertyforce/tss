@@ -177,8 +177,7 @@ def sync_db():
     print("db synced")
 
 
-def phash_reverse_search(image_buffer,k,distance_threshold):
-    target_features = get_phash_and_mirrored_phash(image_buffer) #TTA
+def phash_reverse_search(target_features,k,distance_threshold):
     if k is not None:
         D, I = index.search(target_features, k)
         D = D.flatten()
@@ -197,6 +196,31 @@ app = FastAPI()
 async def read_root():
     return {"Hello": "World"}
 
+
+class Item_image_id(BaseModel):
+    image_id: int
+    k: Optional[str] = None
+    distance_threshold: Optional[str] = None
+
+@app.post("/phash_get_similar_images_by_id")
+async def color_get_similar_images_by_id_handler(item: Item_image_id):
+    try:
+        k=item.k
+        distance_threshold=item.distance_threshold
+        if item.k:
+            k = int(k)
+        if item.distance_threshold:
+            distance_threshold = float(distance_threshold)
+        if (k is None) == (distance_threshold is None):
+            raise HTTPException(status_code=500, detail="both k and distance_threshold present")
+
+        target_features = index.reconstruct(item.image_id).reshape(1,-1)
+        similar = phash_reverse_search(target_features,k,distance_threshold)
+        return similar
+    except:
+        raise HTTPException(
+            status_code=500, detail="Image with this id is not found")
+
 @app.post("/phash_get_similar_images_by_image_buffer")
 async def phash_reverse_search_handler(image: bytes = File(...), k: Optional[str] = Form(None), distance_threshold: Optional[str] = Form(None)):
     if k:
@@ -205,9 +229,10 @@ async def phash_reverse_search_handler(image: bytes = File(...), k: Optional[str
        distance_threshold=int(distance_threshold)
     if (k is None) == (distance_threshold is None): 
         raise HTTPException(status_code=500, detail="both k and distance_threshold present")
-    found_images = phash_reverse_search(image,k,distance_threshold)
-    print(found_images)
-    return found_images
+    target_features = get_phash_and_mirrored_phash(image) #TTA
+    similar = phash_reverse_search(target_features,k,distance_threshold)
+    print(similar)
+    return similar
 
 
 @app.post("/calculate_phash_features")
@@ -217,9 +242,6 @@ async def calculate_phash_features_handler(image: bytes = File(...), image_id: s
     index.add_with_ids(features.reshape(1,-1), np.int64([image_id]))
     return Response(status_code=status.HTTP_200_OK)
 
-
-class Item_image_id(BaseModel):
-    image_id: int
 @app.post("/delete_phash_features")
 async def delete_hist_features_handler(item: Item_image_id):
     delete_descriptor_by_id(item.image_id)
