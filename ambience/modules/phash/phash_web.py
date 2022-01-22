@@ -2,6 +2,7 @@ import uvicorn
 if __name__ == '__main__':
     uvicorn.run('phash_web:app', host='127.0.0.1', port=33336, log_level="info")
 
+# import asyncio
 import faiss
 from typing import Optional
 from pydantic import BaseModel
@@ -18,9 +19,27 @@ index = None
 IMAGE_PATH = "./../../../public/images"
 from tqdm import tqdm
 
-all_data=None
+# from concurrent.futures import ThreadPoolExecutor
+# SearchThreadExecutor = ThreadPoolExecutor(max_workers=4)
+# from joblib import Parallel, delayed
+
+
+def get_all_data_iterator(arraysize=10000):
+    cursor = conn.cursor()
+    query = '''
+        SELECT id, phash
+        FROM phashes
+        '''
+    cursor.execute(query)
+    while True:
+        results = cursor.fetchmany(arraysize)
+        if not results:
+            break
+        yield results
+
+
 def init_index():
-    global index,all_data
+    global index
     try:
         index = faiss.read_index_binary("trained.index")
     except:
@@ -29,12 +48,15 @@ def init_index():
         index = faiss.IndexBinaryIVF(quantizer, d, 1)
         index.nprobe = 1
         index.train(np.array([np.zeros(72)], dtype=np.uint8))
-    all_data = get_all_data()
-    image_ids = np.array([np.int64(x[0]) for x in all_data])
-    phashes = np.array([x[1] for x in all_data])
-    if len(all_data) != 0:
-        print(phashes.shape)
-        index.add_with_ids(phashes, image_ids)
+        index.set_direct_map_type(faiss.DirectMap.Hashtable)
+
+    for result in tqdm(get_all_data_iterator(10000)):
+        ids = [x[0] for x in result]
+        features = [convert_array(x[1]) for x in result]
+        # features = Parallel(n_jobs=1)(delayed(convert_array)(feature) for feature in features)
+        ids=np.int64(ids)
+        features=np.array(features)
+        index.add_with_ids(features,ids)
     print("Index is ready")
 
 
@@ -133,18 +155,9 @@ def get_all_ids():
     return list(map(lambda el: el[0], all_rows))
 
 
-def get_all_data():
-    cursor = conn.cursor()
-    query = '''
-    SELECT id, phash
-    FROM phashes
-    '''
-    cursor.execute(query)
-    all_rows = cursor.fetchall()
-    return list(map(lambda el: (el[0], convert_array(el[1])), all_rows))
-
-
 def convert_array(text):
+    import io
+    import numpy as np
     out = io.BytesIO(text)
     out.seek(0)
     return np.load(out)
@@ -184,10 +197,10 @@ def phash_reverse_search(target_features,k,distance_threshold):
         I = I.flatten()
     elif distance_threshold is not None:
         _, D, I = index.range_search(target_features, distance_threshold)
-    
+
     _, indexes = np.unique(I, return_index=True)
     res=[{"image_id":int(I[idx]), "distance":int(D[idx])} for idx in indexes]
-    res = sorted(res, key=lambda x: x["distance"])    
+    res = sorted(res, key=lambda x: x["distance"])
     return res
 
 
@@ -196,14 +209,13 @@ app = FastAPI()
 async def read_root():
     return {"Hello": "World"}
 
-
 class Item_image_id(BaseModel):
     image_id: int
     k: Optional[str] = None
     distance_threshold: Optional[str] = None
 
 @app.post("/phash_get_similar_images_by_id")
-async def color_get_similar_images_by_id_handler(item: Item_image_id):
+async def phash_get_similar_images_by_id_handler(item: Item_image_id):
     try:
         k=item.k
         distance_threshold=item.distance_threshold
@@ -215,7 +227,11 @@ async def color_get_similar_images_by_id_handler(item: Item_image_id):
             raise HTTPException(status_code=500, detail="both k and distance_threshold present")
 
         target_features = index.reconstruct(item.image_id).reshape(1,-1)
-        similar = phash_reverse_search(target_features,k,distance_threshold)
+        # loop = asyncio.get_event_loop()
+        # similar = await loop.run_in_executor(SearchThreadExecutor,
+        #                                     phash_reverse_search, target_features,
+        #                                     k, distance_threshold)
+        similar = phash_reverse_search(target_features,20,distance_threshold)
         return similar
     except:
         raise HTTPException(
@@ -226,12 +242,16 @@ async def phash_reverse_search_handler(image: bytes = File(...), k: Optional[str
     if k:
         k=int(k)
     if distance_threshold:
-       distance_threshold=int(distance_threshold)
-    if (k is None) == (distance_threshold is None): 
+        distance_threshold=int(distance_threshold)
+    if (k is None) == (distance_threshold is None):
         raise HTTPException(status_code=500, detail="both k and distance_threshold present")
     target_features = get_phash_and_mirrored_phash(image) #TTA
+    # loop = asyncio.get_event_loop()
+    # similar = await loop.run_in_executor(SearchThreadExecutor,
+    #                                      phash_reverse_search, target_features,
+    #                                      k, distance_threshold)
     similar = phash_reverse_search(target_features,k,distance_threshold)
-    print(similar)
+    # print(similar)
     return similar
 
 
