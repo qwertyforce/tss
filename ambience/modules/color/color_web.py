@@ -12,27 +12,31 @@ from tqdm import tqdm
 import cv2
 import sqlite3
 import io
-conn = sqlite3.connect('rgb_histograms_120k.db')
+conn = sqlite3.connect('rgb_histograms.db')
 IMAGE_PATH = "./../../../public/images"
 sub_index = faiss.IndexFlat(512, faiss.METRIC_L1)
 index_id_map = faiss.IndexIDMap2(sub_index)
 
+def get_all_data_iterator(arraysize=10000):
+    cursor = conn.cursor()
+    query = '''
+        SELECT id, rgb_histogram
+        FROM rgb_hists
+        '''
+    cursor.execute(query)
+    while True:
+        results = cursor.fetchmany(arraysize)
+        if not results:
+            break
+        yield results
 
 def init_index():
-    # all_ids = get_all_ids()
-    # for image_id in tqdm(all_ids):
-    #     features = convert_array(get_rgb_histogram_by_id(image_id))
-    #     index_id_map.add_with_ids(features.reshape(1,-1), np.int64([image_id]))
-    image_data=get_all_data()
-    features=[]
-    ids=[]
-    for image in image_data:
-        features.append(image['features'])
-        ids.append(image['image_id'])
-
-    ids=np.int64(ids)
-    features=np.array(features,dtype=np.float32)
-    if(len(features)!=0):
+    for result in tqdm(get_all_data_iterator(10000)):
+        ids = [x[0] for x in result]
+        features = [convert_array(x[1]) for x in result]
+        # features = Parallel(n_jobs=1)(delayed(convert_array)(feature) for feature in features)
+        ids=np.int64(ids)
+        features=np.array(features,dtype=np.float32)
         index_id_map.add_with_ids(features,ids)
     print("Index is ready")
 
@@ -95,16 +99,6 @@ def get_all_ids():
     cursor.execute(query)
     all_rows = cursor.fetchall()
     return list(map(lambda el: el[0], all_rows))
-
-def get_all_data():
-    cursor = conn.cursor()
-    query = '''
-    SELECT id, rgb_histogram
-    FROM rgb_hists
-    '''
-    cursor.execute(query)
-    all_rows = cursor.fetchall()
-    return list(map(lambda el:{"image_id":el[0],"features":convert_array(el[1])},all_rows))
 
 
 def convert_array(text):
