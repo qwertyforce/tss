@@ -84,8 +84,8 @@ def get_text(img_path):
       print("error")
       print(img_path)
       return None
-    result_ru = ocr_ru.ocr(img_path, cls=True)
-    result_en = ocr_en.ocr(img_path, cls=True)
+    result_ru = ocr_ru.ocr(img, cls=True)
+    result_en = ocr_en.ocr(img, cls=True)
 
     result_ru = [a for a in result_ru if a[1][1]>0.6]
     result_en = [a for a in result_en if a[1][1]>0.6]
